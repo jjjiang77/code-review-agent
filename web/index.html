@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CodeReview — 代码审查 Agent</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+      background: #ffffff;
+      color: #000000;
+      font-size: 14px;
+      font-weight: 400;
+    }
+
+    /* 顶栏 — 新野兽派：粗边框 + 硬阴影 */
+    .topbar {
+      height: 56px;
+      background: #0000ff;
+      color: #fff;
+      border-bottom: 4px solid #000;
+      display: flex;
+      align-items: center;
+      padding: 0 24px;
+      justify-content: space-between;
+    }
+    .topbar .brand {
+      display: flex; align-items: center; gap: 14px;
+      font-weight: 800; font-size: 18px; letter-spacing: 0.5px;
+    }
+    .topbar .brand .dot {
+      width: 14px; height: 14px;
+      background: #fff;
+      border: 2px solid #000;
+    }
+    .topbar .meta {
+      font-size: 12px;
+      display: flex; gap: 20px; align-items: center;
+    }
+    .topbar .meta .status {
+      background: #fff;
+      color: #000;
+      padding: 3px 10px;
+      border: 2px solid #000;
+      font-weight: 700;
+    }
+
+    /* 主布局 */
+    .layout {
+      display: flex;
+      height: calc(100vh - 56px);
+    }
+
+    /* 左侧面板 */
+    .panel-left {
+      width: 50%;
+      border-right: 4px solid #000;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+    }
+
+    .panel-header {
+      padding: 12px 20px;
+      border-bottom: 2px solid #000;
+      background: #f0f0ff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .panel-header .title {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+    }
+    .panel-header .actions { display: flex; gap: 6px; }
+
+    .icon-btn {
+      width: 28px; height: 28px;
+      border: 2px solid #000;
+      background: #fff;
+      color: #000;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 2px 2px 0 #000;
+      transition: all 0.08s;
+    }
+    .icon-btn:hover {
+      background: #0000ff;
+      color: #fff;
+      transform: translate(-1px, -1px);
+      box-shadow: 3px 3px 0 #000;
+    }
+    .icon-btn:active {
+      transform: translate(2px, 2px);
+      box-shadow: 0 0 0 #000;
+    }
+
+    /* 拖拽区 */
+    .drop-zone {
+      margin: 16px 20px;
+      border: 3px dashed #000;
+      padding: 20px;
+      text-align: center;
+      cursor: pointer;
+      background: #f8f8ff;
+      transition: all 0.1s;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      background: #0000ff;
+      color: #fff;
+      border-style: solid;
+    }
+    .drop-zone .icon { font-size: 28px; margin-bottom: 6px; }
+    .drop-zone .text { font-size: 13px; font-weight: 700; }
+    .drop-zone .hint { font-size: 11px; margin-top: 4px; opacity: 0.7; }
+    .drop-zone .file-info {
+      margin-top: 10px;
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 14px;
+      background: #fff;
+      color: #000;
+      border: 2px solid #000;
+      font-size: 12px; font-weight: 600;
+      box-shadow: 2px 2px 0 #000;
+    }
+    .drop-zone .file-info .filename { font-weight: 800; }
+
+    /* 代码编辑器 */
+    .code-editor {
+      flex: 1;
+      margin: 0 20px 16px;
+      position: relative;
+    }
+    .code-editor textarea {
+      width: 100%;
+      height: 100%;
+      min-height: 200px;
+      padding: 14px;
+      background: #fff;
+      border: 3px solid #000;
+      color: #000;
+      font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      resize: none;
+      outline: none;
+      box-shadow: 4px 4px 0 #000;
+    }
+    .code-editor textarea:focus {
+      background: #f0f0ff;
+      box-shadow: 6px 6px 0 #0000ff;
+    }
+    .code-editor textarea::placeholder { color: #999; font-weight: 400; }
+
+    .line-count {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      font-size: 11px;
+      font-weight: 700;
+      background: #000;
+      color: #fff;
+      padding: 2px 8px;
+    }
+
+    /* 审查按钮区 */
+    .review-bar {
+      padding: 12px 20px;
+      border-top: 2px solid #000;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #f5f5f5;
+    }
+    .btn {
+      padding: 9px 20px;
+      border: 3px solid #000;
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+      font-family: inherit;
+      box-shadow: 3px 3px 0 #000;
+      transition: all 0.08s;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .btn:hover {
+      transform: translate(-1px, -1px);
+      box-shadow: 4px 4px 0 #000;
+    }
+    .btn:active {
+      transform: translate(3px, 3px);
+      box-shadow: 0 0 0 #000;
+    }
+    .btn-primary {
+      background: #0000ff;
+      color: #fff;
+    }
+    .btn-primary:disabled {
+      background: #ccc;
+      color: #888;
+      border-color: #999;
+      box-shadow: 2px 2px 0 #999;
+      cursor: not-allowed;
+    }
+
+    .progress-text { font-size: 12px; font-weight: 600; }
+
+    /* 右侧面板 */
+    .panel-right {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .report-header {
+      padding: 12px 24px;
+      border-bottom: 2px solid #000;
+      background: #f0f0ff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .report-header .title {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+    }
+    .export-group {
+      display: flex; gap: 6px;
+    }
+    .export-btn {
+      padding: 5px 12px;
+      border: 2px solid #000;
+      background: #fff;
+      color: #000;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 700;
+      font-family: inherit;
+      box-shadow: 2px 2px 0 #000;
+      transition: all 0.08s;
+      text-transform: uppercase;
+    }
+    .export-btn:hover {
+      background: #0000ff;
+      color: #fff;
+      transform: translate(-1px, -1px);
+      box-shadow: 3px 3px 0 #000;
+    }
+    .export-btn:active {
+      transform: translate(2px, 2px);
+      box-shadow: 0 0 0 #000;
+    }
+
+    /* 统计卡片 — 野兽派硬边框硬阴影 */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0;
+      border-bottom: 2px solid #000;
+    }
+    .stat-card {
+      background: #fff;
+      padding: 14px 16px;
+      text-align: center;
+      border-right: 2px solid #000;
+    }
+    .stat-card:last-child { border-right: none; }
+    .stat-card .num {
+      font-size: 26px;
+      font-weight: 900;
+      font-family: "JetBrains Mono", Menlo, monospace;
+      line-height: 1;
+    }
+    .stat-card .label {
+      font-size: 10px;
+      font-weight: 800;
+      margin-top: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+    .stat-high .num { color: #ff3b30; }
+    .stat-medium .num { color: #ff9500; }
+    .stat-low .num { color: #34c759; }
+
+    /* 报告内容区 */
+    .report-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 24px;
+    }
+
+    /* 空状态 */
+    .empty-state {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #999;
+    }
+    .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
+    .empty-state p { font-size: 13px; font-weight: 600; }
+
+    /* loading */
+    .loading-state {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+    }
+    .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid #000;
+      border-top-color: #0000ff;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { font-size: 13px; font-weight: 700; }
+    .loading-step { font-size: 11px; color: #666; font-weight: 600; }
+
+    /* 进度步骤 */
+    .steps {
+      display: flex;
+      gap: 0;
+      margin-bottom: 20px;
+      padding-bottom: 0;
+      border-bottom: 2px solid #000;
+      background: #f8f8ff;
+    }
+    .step {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 10px 8px;
+      border-right: 2px solid #000;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .step:last-child { border-right: none; }
+    .step .circle {
+      width: 20px; height: 20px;
+      border: 2px solid #000;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 900;
+      background: #fff;
+    }
+    .step.active { background: #0000ff; color: #fff; }
+    .step.active .circle { background: #fff; color: #0000ff; border-color: #fff; }
+    .step.done { background: #000; color: #fff; }
+    .step.done .circle { background: #34c759; color: #fff; border-color: #fff; }
+
+    /* 区块标题 */
+    .section { margin-bottom: 20px; }
+    .section-title {
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      margin-bottom: 10px;
+      padding: 6px 12px;
+      background: #000;
+      color: #fff;
+      display: inline-block;
+    }
+
+    /* 静态分析块 */
+    .static-block {
+      background: #f5f5f5;
+      border: 3px solid #000;
+      padding: 12px 14px;
+      font-family: "JetBrains Mono", Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #000;
+      white-space: pre-wrap;
+      max-height: 200px;
+      overflow-y: auto;
+      box-shadow: 4px 4px 0 #000;
+    }
+
+    /* 问题列表 */
+    .issue-list { display: flex; flex-direction: column; gap: 10px; }
+    .issue-item {
+      background: #fff;
+      border: 3px solid #000;
+      border-left: 6px solid #000;
+      padding: 12px 14px;
+      box-shadow: 3px 3px 0 #000;
+      transition: all 0.08s;
+    }
+    .issue-item:hover {
+      transform: translate(-1px, -1px);
+      box-shadow: 4px 4px 0 #000;
+    }
+    .issue-item.severity-high { border-left-color: #ff3b30; }
+    .issue-item.severity-medium { border-left-color: #ff9500; }
+    .issue-item.severity-low { border-left-color: #34c759; }
+
+    .issue-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .issue-title {
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .issue-meta {
+      display: flex; gap: 6px; align-items: center;
+      flex-shrink: 0;
+    }
+    .severity-badge {
+      font-size: 10px;
+      font-weight: 800;
+      padding: 2px 8px;
+      border: 2px solid #000;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      background: #fff;
+    }
+    .severity-high .severity-badge { background: #ff3b30; color: #fff; border-color: #000; }
+    .severity-medium .severity-badge { background: #ff9500; color: #000; border-color: #000; }
+    .severity-low .severity-badge { background: #34c759; color: #000; border-color: #000; }
+    .issue-line {
+      font-size: 11px;
+      font-weight: 700;
+      background: #000;
+      color: #fff;
+      padding: 1px 6px;
+    }
+    .issue-desc {
+      font-size: 12.5px;
+      line-height: 1.55;
+      color: #333;
+    }
+
+    /* 建议区 */
+    .suggestions-block {
+      background: #f8f8ff;
+      border: 3px solid #000;
+      padding: 14px 16px;
+      box-shadow: 4px 4px 0 #0000ff;
+    }
+    .suggestions-block h4 {
+      font-size: 14px;
+      font-weight: 800;
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 2px solid #000;
+    }
+    .suggestions-block p { font-size: 13px; line-height: 1.6; margin: 5px 0; }
+    .suggestions-block ul, .suggestions-block ol { padding-left: 24px; margin: 6px 0; }
+    .suggestions-block li { font-size: 13px; line-height: 1.6; margin: 3px 0; }
+    .suggestions-block code {
+      background: #000;
+      color: #fff;
+      padding: 1px 6px;
+      font-size: 12px;
+      font-family: "JetBrains Mono", Menlo, monospace;
+    }
+    .suggestions-block pre {
+      background: #fff;
+      border: 2px solid #000;
+      padding: 10px 12px;
+      margin: 8px 0;
+      overflow-x: auto;
+    }
+    .suggestions-block pre code {
+      background: none;
+      color: #000;
+      padding: 0;
+    }
+
+    /* 滚动条 */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: #f0f0f0; }
+    ::-webkit-scrollbar-thumb {
+      background: #000;
+      border: 2px solid #f0f0f0;
+    }
+
+    @media (max-width: 900px) {
+      .layout { flex-direction: column; }
+      .panel-left { width: 100%; height: 50%; border-right: none; border-bottom: 4px solid #000; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- 顶栏 -->
+    <div class="topbar">
+      <div class="brand">
+        <div class="dot"></div>
+        <span>CODE REVIEW AGENT</span>
+        <span style="opacity:0.6; font-weight:400; font-size:12px;">v1.0</span>
+      </div>
+      <div class="meta">
+        <span>MODEL: qwen-plus</span>
+        <span class="status">● READY</span>
+      </div>
+    </div>
+
+    <!-- 主布局 -->
+    <div class="layout">
+      <!-- 左侧：输入 -->
+      <div class="panel-left">
+        <div class="panel-header">
+          <span class="title">代码输入</span>
+          <div class="actions">
+            <button class="icon-btn" @click="clearAll" title="清空">✕</button>
+          </div>
+        </div>
+
+        <div
+          class="drop-zone"
+          :class="{ dragover: isDragover }"
+          @dragover.prevent="isDragover = true"
+          @dragleave="isDragover = false"
+          @drop.prevent="handleDrop"
+          @click="triggerFileInput"
+        >
+          <div class="icon">⬆</div>
+          <div class="text">拖拽文件到这里 或 点击上传</div>
+          <div class="hint">支持 .py .js .java .cpp .go .ts 等代码文件</div>
+          <div v-if="filename" class="file-info">
+            <span>▤</span>
+            <span class="filename">{{ filename }}</span>
+            <span>·</span>
+            <span>{{ lineCount }} 行</span>
+          </div>
+        </div>
+        <input ref="fileInput" type="file" style="display:none" @change="handleFileSelect"
+          accept=".py,.js,.java,.cpp,.c,.ts,.go,.rs,.txt">
+
+        <div style="padding: 0 20px 8px;">
+          <div class="section-title">或粘贴代码</div>
+        </div>
+
+        <div class="code-editor">
+          <textarea
+            v-model="code"
+            placeholder="在此粘贴待审查的代码..."
+            :disabled="loading"
+          ></textarea>
+          <div class="line-count">{{ lineCount }} 行</div>
+        </div>
+
+        <div class="review-bar">
+          <span class="progress-text" v-if="!loading">{{ code.trim() ? '就绪' : '等待输入' }}</span>
+          <span class="progress-text" v-else>{{ statusText }}</span>
+          <button class="btn btn-primary" @click="startReview" :disabled="loading || !code.trim()">
+            {{ loading ? '审查中...' : '开始审查' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- 右侧：报告 -->
+      <div class="panel-right">
+        <div class="report-header">
+          <span class="title">审查报告</span>
+          <div class="export-group" v-if="hasReport">
+            <button class="export-btn" @click="copyReport">复制</button>
+            <button class="export-btn" @click="exportMD">MD</button>
+            <button class="export-btn" @click="exportPDF">PDF</button>
+            <button class="export-btn" @click="exportWord">Word</button>
+          </div>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="stats-row" v-if="hasReport || loading">
+          <div class="stat-card">
+            <div class="num">{{ stats.total }}</div>
+            <div class="label">总行数</div>
+          </div>
+          <div class="stat-card stat-high">
+            <div class="num">{{ issueStats.high }}</div>
+            <div class="label">高危</div>
+          </div>
+          <div class="stat-card stat-medium">
+            <div class="num">{{ issueStats.medium }}</div>
+            <div class="label">中危</div>
+          </div>
+          <div class="stat-card stat-low">
+            <div class="num">{{ issueStats.low }}</div>
+            <div class="label">低危</div>
+          </div>
+        </div>
+
+        <div class="report-body">
+          <!-- 空状态 -->
+          <div v-if="!hasReport && !loading" class="empty-state">
+            <div class="icon">▥</div>
+            <p>上传文件或粘贴代码开始审查</p>
+          </div>
+
+          <!-- 加载中 -->
+          <div v-if="loading" class="loading-state">
+            <div class="spinner"></div>
+            <div class="loading-text">{{ statusText }}</div>
+            <div class="loading-step">步骤 {{ currentStep }} / 3</div>
+          </div>
+
+          <!-- 报告内容 -->
+          <template v-if="hasReport">
+            <!-- 步骤 -->
+            <div class="steps">
+              <div class="step" :class="currentStep >= 1 ? 'done' : ''">
+                <div class="circle">{{ currentStep > 1 ? '✓' : '1' }}</div>
+                <span>静态分析</span>
+              </div>
+              <div class="step" :class="currentStep >= 2 ? (currentStep >= 3 ? 'done' : 'active') : ''">
+                <div class="circle">{{ currentStep > 2 ? '✓' : '2' }}</div>
+                <span>LLM 审查</span>
+              </div>
+              <div class="step" :class="currentStep >= 3 ? 'done' : ''">
+                <div class="circle">{{ currentStep >= 3 ? '✓' : '3' }}</div>
+                <span>报告生成</span>
+              </div>
+            </div>
+
+            <!-- 静态分析 -->
+            <div class="section">
+              <div class="section-title">静态分析</div>
+              <div class="static-block">{{ staticReport }}</div>
+            </div>
+
+            <!-- 问题列表 -->
+            <div class="section">
+              <div class="section-title">问题列表（{{ issues.length }}）</div>
+              <div class="issue-list">
+                <div v-for="(issue, i) in issues" :key="i" class="issue-item" :class="'severity-' + severityKey(issue.severity)">
+                  <div class="issue-head">
+                    <div class="issue-title">{{ i + 1 }}. {{ issue.title }}</div>
+                    <div class="issue-meta">
+                      <span class="severity-badge">{{ issue.severity }}</span>
+                      <span v-if="issue.line" class="issue-line">L{{ issue.line }}</span>
+                    </div>
+                  </div>
+                  <div v-if="issue.desc" class="issue-desc">{{ issue.desc }}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 改进建议 -->
+            <div class="section">
+              <div class="section-title">改进建议</div>
+              <div class="suggestions-block" v-html="renderSuggestions"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { createApp, ref, computed } = Vue;
+
+    createApp({
+      setup() {
+        const code = ref('');
+        const filename = ref('');
+        const loading = ref(false);
+        const isDragover = ref(false);
+        const fileInput = ref(null);
+        const statusText = ref('');
+        const currentStep = ref(0);
+        const staticReport = ref('');
+        const fullReport = ref('');
+
+        const hasReport = computed(() => fullReport.value.length > 0);
+
+        const lineCount = computed(() => {
+          if (!code.value) return 0;
+          return code.value.split('\n').length;
+        });
+
+        const stats = computed(() => {
+          const lines = staticReport.value.split('\n');
+          let total = 0;
+          for (const line of lines) {
+            const m = line.match(/总行数:\s*(\d+)/);
+            if (m) { total = parseInt(m[1]); break; }
+          }
+          return { total: total || lineCount.value };
+        });
+
+        function severityKey(sev) {
+          if (sev.includes('高')) return 'high';
+          if (sev.includes('中')) return 'medium';
+          return 'low';
+        }
+
+        const issues = computed(() => {
+          const lines = fullReport.value.split('\n');
+          const result = [];
+          let inTable = false;
+          for (const line of lines) {
+            if (line.includes('问题列表') || line.match(/^\|.*序号.*\|/)) { inTable = true; continue; }
+            if (inTable && line.startsWith('|') && !line.includes('---') && !line.includes('------')) {
+              const parts = line.split('|').filter(p => p.trim());
+              if (parts.length >= 3 && !/^\d+[.、]/.test(parts[0].trim()) && parts[0].trim() !== '序号') {
+                result.push({
+                  title: parts[1].trim().replace(/\*\*/g, '').replace(/^[0-9]+\.\s*/, ''),
+                  severity: parts[2].trim().replace(/\*\*/g, ''),
+                  line: parts[3] ? parts[3].trim().replace(/\*\*/g, '') : '',
+                });
+              }
+            }
+            if (inTable && line.startsWith('###') && result.length > 0) break;
+          }
+          if (result.length === 0) {
+            const regex = /^\s*\d+\.\s+\*\*(.+?)\*\*[：:].*\n/g;
+            const str = fullReport.value;
+            let m;
+            let idx = 0;
+            while ((m = regex.exec(str)) !== null && idx < 20) {
+              result.push({ title: m[1], severity: '中', line: '' });
+              idx++;
+            }
+          }
+          return result;
+        });
+
+        const issueStats = computed(() => {
+          let high = 0, medium = 0, low = 0;
+          for (const issue of issues.value) {
+            const k = severityKey(issue.severity);
+            if (k === 'high') high++;
+            else if (k === 'medium') medium++;
+            else low++;
+          }
+          return { total: issues.value.length, high, medium, low };
+        });
+
+        const renderSuggestions = computed(() => {
+          const lines = fullReport.value.split('\n');
+          let inSection = false;
+          const result = [];
+          for (const line of lines) {
+            if (line.match(/^#{2,3}\s*改进建议/) || line.match(/^#{2,3}\s*优化建议/) || line.match(/^#{2,3}\s*修复建议/)) {
+              inSection = true; continue;
+            }
+            if (inSection) {
+              if (line.match(/^#{2,3}\s/) && result.length > 0) break;
+              result.push(line);
+            }
+          }
+          const text = result.join('\n').trim();
+          return marked.parse(text || '暂无建议');
+        });
+
+        function triggerFileInput() { fileInput.value.click(); }
+
+        function handleFileSelect(e) {
+          const file = e.target.files[0];
+          if (file) loadFile(file);
+        }
+
+        function handleDrop(e) {
+          isDragover.value = false;
+          const file = e.dataTransfer.files[0];
+          if (file) loadFile(file);
+        }
+
+        function loadFile(file) {
+          filename.value = file.name;
+          const reader = new FileReader();
+          reader.onload = (ev) => { code.value = ev.target.result; };
+          reader.readAsText(file);
+        }
+
+        function clearAll() {
+          code.value = '';
+          filename.value = '';
+          fullReport.value = '';
+          staticReport.value = '';
+          currentStep.value = 0;
+          if (fileInput.value) fileInput.value.value = '';
+        }
+
+        function startReview() {
+          if (!code.value.trim() || loading.value) return;
+
+          loading.value = true;
+          currentStep.value = 1;
+          statusText.value = '静态分析中...';
+          fullReport.value = '';
+          staticReport.value = '';
+
+          const body = JSON.stringify({
+            filename: filename.value || '代码片段',
+            code: code.value,
+          });
+
+          let answerText = '';
+
+          fetch('/api/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+          }).then(response => {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            function read() {
+              reader.read().then(({ done, value }) => {
+                if (done) { loading.value = false; return; }
+                buffer += decoder.decode(value, { stream: true });
+                const parts = buffer.split('\n');
+                buffer = parts.pop();
+                for (const part of parts) {
+                  if (part.startsWith('data: ')) {
+                    try {
+                      const data = JSON.parse(part.slice(6));
+                      handleEvent(data);
+                    } catch(e) {}
+                  }
+                }
+                read();
+              }).catch(() => { loading.value = false; });
+            }
+            read();
+          }).catch(err => {
+            statusText.value = '连接失败：' + err.message;
+            loading.value = false;
+          });
+
+          function handleEvent(event) {
+            if (event.type === 'step') {
+              currentStep.value = event.data.step;
+              statusText.value = event.data.label;
+            } else if (event.type === 'static_analysis') {
+              staticReport.value = event.data.report;
+              currentStep.value = 2;
+            } else if (event.type === 'answer') {
+              answerText = event.data.content;
+              fullReport.value = answerText;
+              currentStep.value = 3;
+              statusText.value = '审查完成';
+              loading.value = false;
+            } else if (event.type === 'error') {
+              statusText.value = '失败：' + event.data.message;
+              loading.value = false;
+            } else if (event.type === 'done') {
+              if (!fullReport.value && answerText) {
+                fullReport.value = answerText;
+                currentStep.value = 3;
+              }
+              loading.value = false;
+            }
+          }
+        }
+
+        // 导出功能
+        function buildReportMD() {
+          const fn = filename.value || '代码片段';
+          const dt = new Date().toLocaleString('zh-CN');
+          return `# 代码审查报告\n\n- **文件**: ${fn}\n- **生成时间**: ${dt}\n- **总行数**: ${stats.value.total} 行\n- **问题数**: ${issues.value.length}（高危 ${issueStats.value.high} / 中危 ${issueStats.value.medium} / 低危 ${issueStats.value.low}）\n\n---\n\n## 静态分析结果\n\n\`\`\`\n${staticReport.value}\n\`\`\`\n\n---\n\n${fullReport.value}\n`;
+        }
+
+        function copyReport() {
+          const text = buildReportMD();
+          navigator.clipboard.writeText(text).then(() => {
+            alert('报告已复制到剪贴板');
+          });
+        }
+
+        function exportMD() {
+          const text = buildReportMD();
+          const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+          downloadBlob(blob, (filename.value || 'code') + '_review.md');
+        }
+
+        function exportPDF() {
+          const md = buildReportMD();
+          const html = `
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>代码审查报告</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #111; line-height: 1.6; }
+  h1 { font-size: 24px; border-bottom: 3px solid #000; padding-bottom: 8px; }
+  h2 { font-size: 18px; margin-top: 24px; border-bottom: 2px solid #000; padding-bottom: 4px; }
+  pre { background: #f5f5f5; border: 2px solid #000; padding: 12px; overflow-x: auto; font-size: 13px; font-family: Consolas, monospace; }
+  code { background: #000; color: #fff; padding: 2px 6px; font-size: 12px; font-family: Consolas, monospace; }
+  pre code { background: none; color: #000; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  th, td { border: 2px solid #000; padding: 8px 12px; text-align: left; }
+  th { background: #f0f0ff; }
+</style></head><body>
+${marked.parse(md)}
+</body></html>`;
+          const w = window.open('', '_blank');
+          w.document.write(html);
+          w.document.close();
+          w.onload = () => { w.print(); };
+        }
+
+        function exportWord() {
+          const md = buildReportMD();
+          const htmlContent = marked.parse(md);
+          const html = `
+<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+<head><meta charset='utf-8'><title>代码审查报告</title>
+<style>
+  body { font-family: "Microsoft YaHei", Arial, sans-serif; font-size: 12pt; line-height: 1.6; color: #000; }
+  h1 { font-size: 18pt; border-bottom: 3px solid #000; padding-bottom: 6px; }
+  h2 { font-size: 14pt; margin-top: 18px; border-bottom: 2px solid #000; padding-bottom: 4px; }
+  pre { background: #f5f5f5; border: 2px solid #000; padding: 10px; font-family: Consolas, monospace; font-size: 10pt; }
+  code { font-family: Consolas, monospace; font-size: 10pt; background: #000; color: #fff; padding: 1px 4px; }
+  pre code { background: none; color: #000; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+  th, td { border: 2px solid #000; padding: 6px 10px; text-align: left; }
+  th { background: #f0f0ff; }
+</style></head><body>${htmlContent}</body></html>`;
+          const blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
+          downloadBlob(blob, (filename.value || 'code') + '_review.doc');
+        }
+
+        function downloadBlob(blob, name) {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url; a.download = name;
+          document.body.appendChild(a); a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
+
+        return {
+          code, filename, loading, isDragover, fileInput,
+          statusText, currentStep, staticReport, fullReport,
+          hasReport, lineCount, stats, issues, issueStats,
+          severityKey, renderSuggestions,
+          triggerFileInput, handleFileSelect, handleDrop,
+          clearAll, startReview,
+          copyReport, exportMD, exportPDF, exportWord,
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
